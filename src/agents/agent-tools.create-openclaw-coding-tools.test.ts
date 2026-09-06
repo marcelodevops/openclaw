@@ -1340,6 +1340,7 @@ describe("createOpenClawCodingTools", () => {
       createOpenClawCodingTools({
         config: testConfig,
         includeCoreTools: false,
+        includeCurrentTurnDeliveryTool: true,
         runtimeToolAllowlist: ["memory_search"],
         modelProvider: "openrouter",
         modelId: "openrouter/auto",
@@ -1363,6 +1364,50 @@ describe("createOpenClawCodingTools", () => {
       expect(pluginToolOptions?.nativeChannelId).toBe("oc_native_chat");
       expect(pluginToolOptions?.clientCaps).toEqual(["inline-widgets"]);
       expect(pluginToolOptions?.preparedModelRuntime).toBe(preparedModelRuntime);
+      expect(pluginToolOptions?.includeCurrentTurnDeliveryTool).toBe(true);
+    } finally {
+      resolvePluginToolsSpy.mockRestore();
+    }
+  });
+
+  it("keeps only the exact current-turn delivery instance through restrictive policy", () => {
+    const currentTurnTool = {
+      name: "send_current_reply",
+      label: "Send current reply",
+      description: "Send the current reply.",
+      parameters: { type: "object", properties: {} },
+      execute: async () => ({ content: [], details: { status: "sent" } }),
+    };
+    const pluginCollision = { ...currentTurnTool, label: "Plugin collision" };
+    const resolvePluginToolsSpy = vi
+      .spyOn(openClawPluginTools, "resolveOpenClawPluginToolsForOptions")
+      .mockImplementation((params) => {
+        if (params.currentTurnDeliveryToolRef) {
+          params.currentTurnDeliveryToolRef.value = currentTurnTool;
+        }
+        return [currentTurnTool, pluginCollision];
+      });
+
+    try {
+      const tools = createOpenClawCodingTools({
+        config: { tools: { profile: "coding" } },
+        includeCoreTools: false,
+        includeCurrentTurnDeliveryTool: true,
+        runtimeToolAllowlist: ["read"],
+        toolConstructionPlan: {
+          includeBaseCodingTools: false,
+          includeShellTools: false,
+          includeChannelTools: false,
+          includeOpenClawTools: false,
+          includePluginTools: true,
+        },
+      });
+
+      expect(tools).toHaveLength(1);
+      expect(tools[0]).toMatchObject({
+        name: currentTurnTool.name,
+        label: currentTurnTool.label,
+      });
     } finally {
       resolvePluginToolsSpy.mockRestore();
     }

@@ -25,6 +25,10 @@ import {
 } from "../../code-mode-transcript-authority.js";
 import { resolveConversationCapabilityProfile } from "../../conversation-capability-profile.js";
 import {
+  rebindCurrentTurnDeliveryToolRef,
+  type CurrentTurnDeliveryToolRef,
+} from "../../current-turn-delivery.js";
+import {
   isLocalModelLeanEnabled,
   resolveLocalModelLeanPreserveToolNames,
 } from "../../local-model-lean.js";
@@ -259,6 +263,7 @@ export function prepareEmbeddedAttemptToolBase(params: {
     sessionPermissionPolicy: PreparedSessionPermissionPolicy | undefined,
     abortSignal: AbortSignal,
   ) => {
+    const currentTurnDeliveryToolRef: CurrentTurnDeliveryToolRef = {};
     const constructedToolsRaw = !shouldConstructTools
       ? []
       : (() => {
@@ -307,6 +312,9 @@ export function prepareEmbeddedAttemptToolBase(params: {
             }),
             includeCoreTools: toolConstructionPlan.includeCoreTools,
             includeToolSearchControls: toolSearchControlsEnabledForRun,
+            includeCurrentTurnDeliveryTool:
+              codeModeControlsEnabledForRun && !attempt.forceRestartSafeTools,
+            currentTurnDeliveryToolRef,
             toolSearchCatalogExecutor: params.toolSearchCatalogExecutor,
             toolConstructionPlan: toolConstructionPlan.codingToolConstructionPlan,
             computerContextEpoch,
@@ -334,9 +342,13 @@ export function prepareEmbeddedAttemptToolBase(params: {
           const boundTools = attempt.hostCapabilities
             ? attempt.hostCapabilities.bindToolSurface(allTools)
             : allTools;
+          rebindCurrentTurnDeliveryToolRef(currentTurnDeliveryToolRef, allTools, boundTools);
           params.markCoreToolStage("attempt:create-openclaw-coding-tools");
           const filteredTools = applyEmbeddedAttemptToolsAllow(boundTools, effectiveToolsAllow, {
             toolMeta: (tool) => getPluginToolMeta(tool),
+            preserveTools: currentTurnDeliveryToolRef.value
+              ? new Set([currentTurnDeliveryToolRef.value])
+              : undefined,
           });
           params.markCoreToolStage("attempt:tools-allow");
           return filteredTools;

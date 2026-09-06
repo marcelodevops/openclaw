@@ -199,6 +199,76 @@ describe("runEmbeddedAttempt context engine sessionKey forwarding", () => {
     expect(toolSearchControlsCase.toolSearchCatalogRef).toEqual({});
   });
 
+  it("keeps exact host delivery through an explicit full-attempt toolsAllow", async () => {
+    const readTool = { name: "read", execute: async () => "" };
+    const currentTurnDeliveryTool = {
+      name: "send_current_reply",
+      label: "Send current reply",
+      description: "Send the current OpenClaw Code Mode reply.",
+      parameters: { type: "object", properties: {} },
+      execute: async () => ({ content: [], details: { status: "sent" } }),
+    };
+    hoisted.createOpenClawCodingToolsMock.mockImplementationOnce((rawOptions) => {
+      const options = rawOptions as {
+        currentTurnDeliveryToolRef?: { value?: typeof currentTurnDeliveryTool };
+      };
+      if (!options.currentTurnDeliveryToolRef) {
+        throw new Error("expected current-turn delivery tool ref");
+      }
+      options.currentTurnDeliveryToolRef.value = currentTurnDeliveryTool;
+      return [readTool, currentTurnDeliveryTool];
+    });
+
+    await createContextEngineAttemptRunner({
+      contextEngine: {
+        assemble: async ({ messages }) => ({ messages, estimatedTokens: 1 }),
+      },
+      sessionKey,
+      tempPaths,
+      attemptOverrides: {
+        disableTools: false,
+        toolsAllow: ["read"],
+        config: { tools: { codeMode: { enabled: true } } } as OpenClawConfig,
+      },
+    });
+
+    const sessionOptions = mockParams(
+      hoisted.createAgentSessionMock,
+      0,
+      "createAgentSession options",
+    );
+    const customTools = requireRecords(sessionOptions.customTools, "customTools");
+    expect(customTools.map((tool) => tool.name)).toEqual(["exec", "wait"]);
+    const execTool = findRecord(customTools, (tool) => tool.name === "exec", "Code Mode exec");
+    expect(execTool.description).toContain("send_current_reply");
+  });
+
+  it.each([
+    ["ordinary runs", {}, false],
+    [
+      "restart-safe runs",
+      {
+        forceRestartSafeTools: true,
+        config: { tools: { codeMode: { enabled: true } } } as OpenClawConfig,
+      },
+      false,
+    ],
+  ] as const)("omits current-turn delivery from %s", async (_, overrides, expected) => {
+    await createContextEngineAttemptRunner({
+      contextEngine: createContextEngineBootstrapAndAssemble(),
+      sessionKey,
+      tempPaths,
+      attemptOverrides: { disableTools: false, ...overrides },
+    });
+
+    const options = mockParams(
+      hoisted.createOpenClawCodingToolsMock,
+      0,
+      "createOpenClawCodingTools options",
+    );
+    expect(options.includeCurrentTurnDeliveryTool).toBe(expected);
+  });
+
   it("carries the resolved context budget into OpenClaw tool construction", async () => {
     await createContextEngineAttemptRunner({
       contextEngine: createContextEngineBootstrapAndAssemble(),

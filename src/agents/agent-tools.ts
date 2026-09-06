@@ -75,6 +75,10 @@ import {
   bindActiveCronCreatorAuthorityResolver,
   bindCronManagementGrant,
 } from "./cron-creator-authority-context.js";
+import {
+  rebindCurrentTurnDeliveryToolRef,
+  type CurrentTurnDeliveryToolRef,
+} from "./current-turn-delivery.js";
 import { applyDelegationCapability, type DelegationCapability } from "./delegation-capability.js";
 import { pinExecToolTarget } from "./exec-tool-target-pinning.js";
 import { prepareGitHubToolEnvironment } from "./github-tool-identity.js";
@@ -373,6 +377,10 @@ type OpenClawCodingToolsOptions = {
   includeCoreTools?: boolean;
   /** Include Tool Search control tools when enabled for this run. */
   includeToolSearchControls?: boolean;
+  /** Include the host-authorized current-turn reply tool for engaged Code Mode. */
+  includeCurrentTurnDeliveryTool?: boolean;
+  /** Internal slot carrying the exact host-created delivery tool through outer attempt policy. */
+  currentTurnDeliveryToolRef?: CurrentTurnDeliveryToolRef;
   /** Executes cataloged tools through the active agent run lifecycle. */
   toolSearchCatalogExecutor?: ToolSearchCatalogToolExecutor;
   /** Runtime-local Tool Search catalog ref shared with attempt compaction. */
@@ -775,8 +783,10 @@ function createOpenClawCodingToolsInternal(options?: OpenClawCodingToolsOptions)
           turnSourceThreadId: options.currentThreadTs ?? options.messageThreadId,
         }
       : undefined;
+  const currentTurnDeliveryToolRef = options?.currentTurnDeliveryToolRef ?? {};
+  delete currentTurnDeliveryToolRef.value;
   const pluginToolsOnly = filterToolsByClientCaps(
-    includeOpenClawTools || !includePluginTools
+    includeOpenClawTools || (!includePluginTools && !options?.includeCurrentTurnDeliveryTool)
       ? []
       : resolveOpenClawPluginToolsForOptions({
           options: {
@@ -791,6 +801,7 @@ function createOpenClawCodingToolsInternal(options?: OpenClawCodingToolsOptions)
             agentThreadId: options?.messageThreadId,
             nativeChannelId: options?.nativeChannelId,
             messageActionTurnCapability: options?.messageActionTurnCapability,
+            includeCurrentTurnDeliveryTool: options?.includeCurrentTurnDeliveryTool,
             agentDir: options?.agentDir,
             preparedModelRuntime: options?.preparedModelRuntime,
             workspaceDir: workspaceRoot,
@@ -820,8 +831,10 @@ function createOpenClawCodingToolsInternal(options?: OpenClawCodingToolsOptions)
             clientCaps: options?.clientCaps,
             toolBindings: options?.toolBindings,
             authProfileStore: options?.authProfileStore,
+            disablePluginTools: !includePluginTools,
           },
           resolvedConfig: options?.config,
+          currentTurnDeliveryToolRef,
         }),
     options?.clientCaps,
   );
@@ -890,6 +903,8 @@ function createOpenClawCodingToolsInternal(options?: OpenClawCodingToolsOptions)
             agentThreadId: options?.messageThreadId,
             nativeChannelId: options?.nativeChannelId,
             messageActionTurnCapability: options?.messageActionTurnCapability,
+            includeCurrentTurnDeliveryTool: options?.includeCurrentTurnDeliveryTool,
+            currentTurnDeliveryToolRef,
             agentGroupId: options?.groupId ?? null,
             agentGroupChannel: options?.groupChannel ?? null,
             agentGroupSpace: options?.groupSpace ?? null,
@@ -1050,10 +1065,19 @@ function createOpenClawCodingToolsInternal(options?: OpenClawCodingToolsOptions)
       toolDenylist: pluginToolDenylist,
     }),
   });
-  // Host-bound ring-zero tools carry their own authority checks. Agent policy
-  // must not deadlock setup, but the tools still receive schema/hook wrappers.
+  const currentTurnDeliveryTool =
+    options?.includeCurrentTurnDeliveryTool &&
+    currentTurnDeliveryToolRef.value &&
+    tools.includes(currentTurnDeliveryToolRef.value)
+      ? currentTurnDeliveryToolRef.value
+      : undefined;
+  const hostBoundTools = currentTurnDeliveryTool
+    ? [...ringZeroTools, currentTurnDeliveryTool]
+    : ringZeroTools;
+  // The exact host-created capability survives operator policy. Public-name
+  // collisions remain ordinary plugin tools and cannot enter this set.
   const authorizedTools = applyDelegationCapability(
-    mergeAgentRingZeroTools(ringZeroTools, subagentFiltered),
+    mergeAgentRingZeroTools(hostBoundTools, subagentFiltered),
     options?.delegationCapability,
   ).filter(
     (tool) =>
@@ -1115,7 +1139,7 @@ function createOpenClawCodingToolsInternal(options?: OpenClawCodingToolsOptions)
     allocateToolOutcomeOrdinal: options?.allocateToolOutcomeOrdinal,
   };
   // NOTE: Keep canonical (lowercase) tool names here. Provider transports remap on the wire.
-  return finalizeAgentTools({
+  const finalizedTools = finalizeAgentTools({
     tools: authorizedTools,
     modelProvider: options?.modelProvider,
     modelId: options?.modelId,
@@ -1128,6 +1152,12 @@ function createOpenClawCodingToolsInternal(options?: OpenClawCodingToolsOptions)
     agentId: executionAgentId,
     recordToolPrepStage: options?.recordToolPrepStage,
   }).map((tool) => wrapToolWithGatewayCallerIdentity(tool, toolCallerIdentity));
+  rebindCurrentTurnDeliveryToolRef(
+    options?.currentTurnDeliveryToolRef,
+    authorizedTools,
+    finalizedTools,
+  );
+  return finalizedTools;
 }
 
 /** Build the runtime tool list exposed through the public agent harness SDK. */
