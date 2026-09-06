@@ -224,6 +224,7 @@ export class CodexToolTranscriptProjection {
       success: boolean;
       contentItems: CodexDynamicToolCallOutputContentItem[];
       details?: unknown;
+      requiredCommit?: boolean;
     },
     resultContentSource?: "network",
   ): void {
@@ -234,6 +235,7 @@ export class CodexToolTranscriptProjection {
       isError: !params.success,
       details: params.details,
       ...(resultContentSource ? { resultContentSource } : {}),
+      requiredCommit: params.requiredCommit,
     });
   }
 
@@ -620,7 +622,7 @@ export class CodexToolTranscriptProjection {
     this.options.checkpointMessage?.({ read: () => message });
   }
 
-  private recordToolResult(params: ToolTranscriptResultInput): void {
+  private recordToolResult(params: ToolTranscriptResultInput & { requiredCommit?: boolean }): void {
     if (!params.id || !params.name || this.resultIds.has(params.id)) {
       return;
     }
@@ -636,6 +638,7 @@ export class CodexToolTranscriptProjection {
       // A linked raw patch output enriches FileChange after item/completed.
       // Keep that result mutable only until the promised raw output arrives.
       ready: () => !this.pendingRawPatchOutputIds.has(params.id),
+      requiredCommit: params.requiredCommit,
     });
   }
 

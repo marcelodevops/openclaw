@@ -11,6 +11,7 @@ import {
 
 export { getCoreTtsToolResultMediaUrls } from "../agents/tools/tts-tool-result-provenance.js";
 export { consumeTrustedToolNoStartError } from "../agents/tool-result-error.js";
+export { commitProviderSessionTranscriptPrefix } from "../agents/harness/host-private-capabilities.js";
 export {
   acknowledgeInternalToolResult,
   copyInternalToolResultState,

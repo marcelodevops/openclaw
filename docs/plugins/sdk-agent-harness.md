@@ -764,6 +764,26 @@ runtime-compatible schema filtering, hidden catalog execution, directory
 hydration, and catalog cleanup. Harnesses still own their SDK-specific tool
 conversion and native execution callback.
 
+### Durable provider transcript prefixes
+
+Native harnesses may use `commitProviderSessionTranscriptPrefix(...)` from
+`openclaw/plugin-sdk/agent-harness-tool-runtime` to persist a completed provider
+tool-result prefix before the enclosing turn resumes. Pass the exact attempt's
+`hostCapabilities`, stable event and idempotency identities, and a synchronous
+`assertCurrent` closure bound to the provider checkpoint that owns those
+results.
+
+The host applies transcript hooks and redaction, verifies the existing prefix
+and parent continuity, and commits the missing suffix through the canonical
+SQLite transcript transaction. It invokes `assertCurrent` before preparation
+and again inside the atomic append. The assertion must throw after checkpoint
+retirement, replacement, or cancellation; do not replace it with an abort
+observer or a check performed only after the commit.
+
+Resume the provider turn only after a `committed` or `replayed` outcome. Treat
+every other outcome as non-durable. An unbound or retired host capability fails
+closed; providers must not add a separate journal or transcript fallback.
+
 After the last policy filter, schema quarantine, and native registration
 intersection, call `finalizeAgentToolAvailability(tools, options?)` from
 `openclaw/plugin-sdk/agent-harness-runtime` before snapshotting tool definitions.

@@ -1,4 +1,5 @@
 import { onInternalDiagnosticEvent } from "openclaw/plugin-sdk/diagnostic-runtime";
+import { asOptionalRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { handleCodexAppServerApprovalRequest } from "./approval-bridge.js";
 import { isCodexAppServerApprovalRequest } from "./client.js";
 import { shouldAutoApproveCodexAppServerApprovals } from "./config.js";
@@ -256,6 +257,9 @@ export function createCodexAttemptServerRequestController(
             call,
             response,
             toCodexDynamicToolProtocolResponse(response),
+            call.namespace == null &&
+              (call.tool === "exec" || call.tool === "wait") &&
+              asOptionalRecord(response.transcriptDetails)?.status === "waiting",
           );
           await projector?.transcriptCheckpoint.flush();
           return response;

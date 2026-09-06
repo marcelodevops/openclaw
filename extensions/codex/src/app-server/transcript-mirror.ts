@@ -29,6 +29,7 @@ import {
   attachCodexMirrorRunId,
   buildCodexMirrorDedupeIdentity,
   fingerprintCodexMirrorSourceMessage,
+  hasCodexMirrorOrigin,
   isMirroredAgentMessage,
   readCodexMirrorSourceFingerprint,
   type MirroredAgentMessage,
@@ -139,11 +140,7 @@ async function mirrorBestEffort(params: {
       storePath: params.params.sessionTarget?.storePath,
       cwd: params.cwd,
       messages,
-      // Scope is thread-stable. Each entry in `messagesSnapshot` is tagged
-      // with a per-turn `attachCodexMirrorIdentity` value carrying its own
-      // turnId, so distinct turns produce distinct dedupe keys via the
-      // identity (not via the scope). Dropping `turnId` from the scope here is
-      // what lets a re-emitted prior-turn entry collide with its existing key.
+      // The thread-stable scope lets per-turn mirror identities dedupe re-emitted rows.
       idempotencyScope: `codex-app-server:${params.threadId}`,
       runId: params.params.runId,
       runMirrorIdentityPrefix: `${params.turnId}:`,
@@ -334,6 +331,7 @@ async function mirror(params: {
   prepareAssistantTranscriptMessage?: EmbeddedRunAttemptParams["prepareAssistantTranscriptMessage"];
   config?: SessionTranscriptWriteLockParams["config"];
   skipBeforeMessageWriteHooks?: boolean;
+  inspectOnly?: boolean;
 }): Promise<CodexAppServerTranscriptMirrorResult> {
   const messages = params.messages.filter(isMirroredAgentMessage);
   if (messages.length === 0) {
@@ -383,6 +381,8 @@ async function mirror(params: {
       const nextAnchorsByMirrorIdentity = new Map<string, TranscriptEntryAnchor>();
       const nextMessagesPresent: MirroredAgentMessage[] = [];
       const nextUserMessageReceipts: MirroredUserMessageReceipt[] = [];
+      let exactPrefixAnchor: TranscriptEntryAnchor | undefined;
+      let prefixMissing = false;
       const mirrorFacts = await transcript.readMessageFacts({
         idempotencyKeys: candidateIdempotencyKeys,
       });
@@ -416,6 +416,20 @@ async function mirror(params: {
         if (idempotencyKey && mirrorFacts.existingIdempotencyKeys.has(idempotencyKey)) {
           const persistedMessage = mirrorFacts.messagesByIdempotencyKey.get(idempotencyKey);
           const persistedAnchor = mirrorFacts.anchorsByIdempotencyKey.get(idempotencyKey);
+          if (
+            params.inspectOnly &&
+            (prefixMissing ||
+              !persistedMessage ||
+              !persistedAnchor ||
+              !hasCodexMirrorOrigin(persistedMessage) ||
+              readMirrorIdentity(persistedMessage) !== mirrorIdentity ||
+              readCodexMirrorSourceFingerprint(persistedMessage) !== sourceFingerprint ||
+              (exactPrefixAnchor &&
+                persistedAnchor.effectiveParentId !== exactPrefixAnchor.entryId))
+          ) {
+            throw new Error("Codex transcript mirror prefix drifted");
+          }
+          exactPrefixAnchor = persistedAnchor;
           if (persistedMessage && isMirroredAgentMessage(persistedMessage)) {
             nextMessagesPresent.push(persistedMessage);
             if (persistedMessage.role === "user" && persistedAnchor) {
@@ -435,6 +449,10 @@ async function mirror(params: {
           continue;
         }
         assertWritable();
+        if (params.inspectOnly) {
+          prefixMissing = true;
+          continue;
+        }
         const preparedUserMessage =
           transcriptMessage.role === "user"
             ? {

@@ -220,10 +220,15 @@ export class CodeModeTranscriptAuthority {
   }
 
   async commitPrefix(
-    params: { baseAnchor?: TranscriptEntryAnchor; entries: readonly TranscriptPrefixEntry[] },
+    params: {
+      assertCurrent?: () => void;
+      baseAnchor?: TranscriptEntryAnchor;
+      entries: readonly TranscriptPrefixEntry[];
+    },
     prepare: (message: AgentMessage) => AgentMessage | null,
   ) {
     this.#assertActive();
+    params.assertCurrent?.();
     const resolved = resolveSqliteTranscriptScope(this.#target);
     const sources: Source[] = params.entries.map((entry) => {
       const reservation = this.reserve(entry.message);
@@ -305,6 +310,7 @@ export class CodeModeTranscriptAuthority {
         message: entry.reservation?.attach(identified, identity) ?? identified,
       };
     });
+    params.assertCurrent?.();
     if (prepared.some((entry) => !entry)) {
       return { kind: "suppressed" as const };
     }
@@ -333,6 +339,7 @@ export class CodeModeTranscriptAuthority {
       touchSessionEntry: entries.length > 0,
       validateBeforeAppend: (database) => {
         this.#assertActive();
+        params.assertCurrent?.();
         return isDeepStrictEqual(
           readTranscriptMirrorFactsInTransaction(database, resolved, factParams),
           facts,

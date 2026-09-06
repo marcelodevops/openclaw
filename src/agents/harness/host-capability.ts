@@ -29,6 +29,7 @@ import {
   runBeforeToolCallHook,
 } from "../agent-tools.before-tool-call.js";
 import { createOpenClawCodingTools } from "../agent-tools.js";
+import { resolveCodeModeTranscriptAuthority } from "../code-mode-transcript-authority.js";
 import { log } from "../embedded-agent-runner/logger.js";
 import type { EmbeddedRunAttemptParams } from "../embedded-agent-runner/run/types.js";
 import { runBestEffortCallback } from "../embedded-agent-subscribe.callback.js";
@@ -54,16 +55,20 @@ import {
   getCoreTtsToolResultMediaUrls,
   transferCoreTtsToolResultProvenance,
 } from "../tools/tts-tool-result-provenance.js";
+import { redactTranscriptMessage } from "../transcript-redact.js";
 import { bindHarnessContextMedia } from "./context-media.js";
+import { runAgentHarnessBeforeMessageWriteHook } from "./hook-helpers.js";
 import type { AgentHarnessHostCapabilities } from "./host-capability-types.js";
 import {
   registerAgentHarnessBeforeToolCallRetention,
   registerAgentHarnessScheduledToolProjectionCapability,
   registerAgentHarnessTtsProvenanceTransferCapability,
+  registerTranscriptCommit,
   resolveAgentQuestionAnswerAuthority,
   withAgentQuestionAnswerAuthority,
 } from "./host-private-capabilities.js";
 import { createSessionNodeAuthorities } from "./node-execution-authority.js";
+import { projectAgentHarnessTranscriptMessageForDisplay } from "./transcript-visibility.js";
 
 type AgentHarnessHostAttempt = Partial<EmbeddedRunAttemptParams> &
   Pick<EmbeddedRunAttemptParams, "admittedRunContext" | "runId">;
@@ -197,6 +202,7 @@ export function createAgentHarnessHostCapabilities(params: {
   const { lifecycleGeneration } = delegatedAuthority;
   const { runId } = delegatedAuthority.operationalRunInstance;
   const coreTtsToolResults = new WeakSet<object>();
+  const transcriptAuthority = resolveCodeModeTranscriptAuthority(attempt);
   let active = true;
   // Lexical closure must also fence work already past its entry guard. The
   // result guards below cover exact authority loss that does not use close().
@@ -640,6 +646,24 @@ export function createAgentHarnessHostCapabilities(params: {
       );
     },
   });
+  if (transcriptAuthority) {
+    registerTranscriptCommit(capabilities, (prefix) =>
+      transcriptAuthority.commitPrefix(prefix, (message) => {
+        const hooked = runAgentHarnessBeforeMessageWriteHook({
+          agentId: attempt.agentId,
+          message,
+          prepareAssistantTranscriptMessage: attempt.prepareAssistantTranscriptMessage,
+          sessionKey: attempt.sessionKey,
+        });
+        return hooked
+          ? projectAgentHarnessTranscriptMessageForDisplay({
+              hidden: attempt.trigger === "memory",
+              message: redactTranscriptMessage(hooked, config),
+            })
+          : null;
+      }),
+    );
+  }
   registerAgentHarnessTtsProvenanceTransferCapability({
     hostCapabilities: capabilities,
     ownerPluginId: params.pluginId,
@@ -685,6 +709,7 @@ export function createAgentHarnessHostCapabilities(params: {
       if (!active) {
         return;
       }
+      transcriptAuthority?.close();
       active = false;
       capabilityAbortController.abort();
     },

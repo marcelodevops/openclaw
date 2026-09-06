@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { ReplyToolAuthorityOverlay } from "../../auto-reply/reply/reply-run-registry.contracts.js";
+import type { CodeModeTranscriptAuthority } from "../code-mode-transcript-authority.js";
 import type { CronScheduledToolProjectionRequest } from "../exec-tool-target-pinning.js";
 import type { AnyAgentTool } from "../tools/common.js";
 import type { AgentHarnessHostCapabilities } from "./host-capability-types.js";
@@ -118,6 +119,21 @@ const ttsProvenanceTransferCapabilities = new WeakMap<
   AgentHarnessHostCapabilities,
   Readonly<{ ownerPluginId: string; transfer: AgentHarnessTtsProvenanceTransfer }>
 >();
+type TranscriptCommit = CodeModeTranscriptAuthority["commitPrefix"];
+const transcriptCommits = new WeakMap<AgentHarnessHostCapabilities, TranscriptCommit>();
+export const registerTranscriptCommit = transcriptCommits.set.bind(transcriptCommits);
+export function commitProviderSessionTranscriptPrefix(
+  params: {
+    assertCurrent: () => void;
+    hostCapabilities: AgentHarnessHostCapabilities;
+  } & Omit<Parameters<TranscriptCommit>[0], "assertCurrent">,
+) {
+  const { hostCapabilities, ...commitParams } = params;
+  return (
+    transcriptCommits.get(hostCapabilities)?.(commitParams, (message) => message) ??
+    Promise.reject(new Error("provider transcript commit requires host transcript capability"))
+  );
+}
 
 export function registerAgentHarnessScheduledToolProjectionCapability(params: {
   hostCapabilities: AgentHarnessHostCapabilities;
